@@ -1,0 +1,170 @@
+/*
+  style.css - how the app looks.
+  Layout idea: the camera fills the screen like a viewfinder; a gym-scoreboard
+  panel sits top-left and the buttons sit along the bottom edge.
+
+  Variables (--name) hold colours and fonts in one place, so changing a colour
+  here changes it everywhere.
+*/
+:root {
+  --bg: #0d1117;          /* near-black with a blue tint, like a dark gym at night */
+  --panel: rgba(13, 17, 23, 0.86);
+  --line: #2b3440;
+  --text: #e8edf2;
+  --muted: #8b97a6;
+  --amber: #ffb020;       /* shot-clock amber: the accent colour */
+  --make: #2fd27a;        /* green for makes */
+  --miss: #ff5a52;        /* red for misses */
+  --display: "Saira Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: dark;
+}
+
+/* Make the page exactly fill the screen with no scrolling. */
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--body);
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent; /* no grey flash when tapping on phones */
+}
+
+[hidden] { display: none !important; }
+
+/* The stage: everything is positioned inside it. */
+#stage { position: relative; width: 100%; height: 100%; }
+
+/* object-fit: contain shows the WHOLE camera picture (with black bars if needed),
+   so the box you draw lines up exactly with the camera pixels. */
+#camera, #overlay {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+}
+#camera { object-fit: contain; background: #000; }
+#overlay { touch-action: none; } /* stops the page scrolling while you drag the rim box */
+
+/* ---------- Scoreboard ---------- */
+.scoreboard {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  left: calc(env(safe-area-inset-left, 0px) + 12px);
+  display: flex; align-items: center; gap: 14px;
+  padding: 8px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: var(--display);
+  font-variant-numeric: tabular-nums; /* digits all the same width, so they don't jump */
+  pointer-events: none;               /* taps go through to the camera layer */
+}
+.fg { font-size: 44px; font-weight: 800; color: var(--amber); line-height: 1; }
+.fg small { font-size: 22px; margin-left: 2px; }
+.counts { display: flex; gap: 12px; }
+.counts div { display: flex; flex-direction: column; align-items: center; }
+.counts span { font-size: 24px; font-weight: 700; line-height: 1; }
+.counts label {
+  font-family: var(--body);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+/* ---------- MAKE / MISS banner ---------- */
+.banner {
+  position: absolute; left: 50%; top: 22%;
+  transform: translateX(-50%);
+  font-family: var(--display); font-weight: 800;
+  font-size: clamp(48px, 14vw, 96px);
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  animation: pop 0.25s ease-out;
+}
+.banner.make { color: var(--make); }
+.banner.miss { color: var(--miss); }
+@keyframes pop { from { transform: translateX(-50%) scale(0.7); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .banner { animation: none; } }
+
+/* ---------- Setup panel and summary ---------- */
+.panel {
+  position: absolute;
+  left: 16px; right: 16px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  max-width: 440px; margin: 0 auto;
+  padding: 16px 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  max-height: 80%; overflow-y: auto;
+}
+.step {
+  margin: 0;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--amber);
+}
+.panel h1 {
+  margin: 2px 0 6px;
+  font-family: var(--display); font-weight: 700; font-size: 30px;
+  text-wrap: balance;
+}
+.panel p { margin: 0 0 10px; line-height: 1.45; color: var(--text); }
+.error { color: var(--miss) !important; }
+
+.swatch-row { display: flex; align-items: center; gap: 8px; color: var(--muted) !important; }
+.swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--text); }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ---------- Buttons ---------- */
+.btn {
+  font: 600 15px var(--body);
+  color: var(--text);
+  background: #1a2129;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 11px 14px;
+  min-height: 44px;            /* big enough to hit with a sweaty finger */
+  cursor: pointer;
+}
+.btn:active { transform: translateY(1px); }
+.btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.btn.primary { background: var(--amber); color: #1b1300; border-color: var(--amber); }
+.btn.danger { color: var(--miss); }
+
+/* ---------- Bottom controls ---------- */
+.controls {
+  position: absolute; left: 0; right: 0;
+  bottom: 0;
+  padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px);
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
+}
+
+/* ---------- Camera settings ---------- */
+.settings-btn {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: calc(env(safe-area-inset-right, 0px) + 12px);
+  background: var(--panel);
+}
+.settings { z-index: 2; background: var(--bg); }  /* solid, sits above everything */
+.setting { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.setting label { font-weight: 600; }
+.setting label small { display: block; margin-top: 2px; }
+.setting output { font-family: var(--display); color: var(--amber); font-variant-numeric: tabular-nums; }
+.setting small, .note { font-weight: 400; font-size: 12px; color: var(--muted) !important; }
+.setting input[type="range"] { width: 100%; accent-color: var(--amber); }
+.setting.check { flex-direction: row; align-items: flex-start; gap: 10px; }
+.setting.check input { width: 22px; height: 22px; margin-top: 1px; accent-color: var(--amber); flex: none; }
+
+/* ---------- History table ---------- */
+.history {
+  width: 100%; border-collapse: collapse; margin: 6px 0 14px;
+  font-size: 14px; font-variant-numeric: tabular-nums;
+}
+.history th {
+  text-align: left; font-weight: 600; color: var(--muted);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--line); padding: 4px 6px 4px 0;
+}
+.history td { padding: 6px 6px 6px 0; border-bottom: 1px solid var(--line); }
