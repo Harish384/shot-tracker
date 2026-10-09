@@ -1,31 +1,38 @@
 <!doctype html>
 <!--
-  index.html - the STRUCTURE of the app (what's on the screen).
+  index.html - the STRUCTURE of Marksman Training (what's on the screen).
   style.css decides how it looks. The js/ files decide how it behaves.
+
+  Layers, from bottom to top:
+    #stage   - the live camera, drawings, scoreboard, setup panel, buttons
+    pages    - #home, #reports, #report: full-screen pages that cover the camera
 -->
 <html lang="en">
 <head>
-  <!-- charset: which text encoding the file uses -->
   <meta charset="utf-8">
-  <!-- viewport: fit the page to the phone's width and don't let pinch-zoom mess up the layout -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <!-- theme-color: colours the phone's browser bar to match the app -->
   <meta name="theme-color" content="#0d1117">
-  <title>Shot Tracker</title>
-  <!-- Load the font from Google Fonts. If there's no internet, the fallback font is used. -->
+  <title>Marksman Training</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700;800&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- The "stage" holds the live camera picture and a transparent drawing layer on top. -->
+  <!-- The logo, defined once and reused with <use href="#mark">. A rim inside a crosshair. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="mark" viewBox="0 0 48 48">
+      <circle cx="24" cy="24" r="16" fill="none" stroke="currentColor" stroke-width="3"/>
+      <path d="M24 2v11M24 35v11M2 24h11M35 24h11" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="24" cy="24" r="5" fill="currentColor"/>
+    </symbol>
+  </svg>
+
+  <!-- ===================== CAMERA STAGE ===================== -->
   <main id="stage">
-    <!-- playsinline: play inside the page on iPhone (not fullscreen). muted: required for autoplay. -->
     <video id="camera" playsinline muted></video>
-    <!-- We draw the hoop box, ball circle and trail on this canvas. -->
     <canvas id="overlay"></canvas>
 
-    <!-- Scoreboard, top-left. Hidden until tracking starts. -->
+    <!-- Scoreboard, top-left, while tracking. -->
     <section id="scoreboard" class="scoreboard" hidden>
       <div class="fg"><span id="fgValue">0.0</span><small>%</small></div>
       <div class="counts">
@@ -35,27 +42,33 @@
       </div>
     </section>
 
-    <!-- Live "can the app see the ball?" indicator (Ready step and while tracking). -->
+    <!-- "Ball seen" indicator (Ready test and tracking). -->
     <div id="ballStatus" class="ball-status" hidden>Looking for the ball</div>
 
     <!-- Big MAKE / MISS message after each shot. -->
     <div id="banner" class="banner" hidden></div>
 
-    <!-- Setup instructions. The text changes at each step. -->
-    <section id="panel" class="panel">
+    <!-- Setup panel. The text changes at each step. -->
+    <section id="panel" class="panel" hidden>
       <p class="step" id="stepLabel">Setup</p>
-      <h1 id="panelTitle">Shot Tracker</h1>
-      <p id="panelText">Put your phone at the side of the court so it sees you and the hoop. Then start the camera.</p>
+      <h1 id="panelTitle"></h1>
+      <p id="panelText"></p>
       <p id="swatchRow" class="swatch-row" hidden><span id="swatch" class="swatch"></span><span id="swatchText"></span></p>
       <div class="actions">
-        <button id="primaryBtn" class="btn primary" type="button">Start camera</button>
-        <button id="secondaryBtn" class="btn" type="button" hidden>Skip</button>
+        <button id="primaryBtn" class="btn primary" type="button" hidden></button>
+        <button id="secondaryBtn" class="btn" type="button" hidden></button>
+        <button id="exitBtn" class="btn quiet" type="button" hidden>Home</button>
       </div>
       <p id="errorText" class="error" hidden></p>
     </section>
 
-    <!-- Controls while tracking, along the bottom. -->
+    <!-- Buttons while tracking. The first one shows and changes your spot. -->
     <nav id="controls" class="controls" hidden>
+      <button id="spotBtn" class="btn spot-btn" type="button">
+        <span class="spot-btn-label">Spot</span>
+        <span id="spotName">Left wing</span>
+        <span id="spotScore" class="spot-score">0/0</span>
+      </button>
       <button id="undoBtn" class="btn" type="button">Undo</button>
       <button id="flipBtn" class="btn" type="button">Flip last</button>
       <button id="addMakeBtn" class="btn" type="button">+ Make</button>
@@ -63,23 +76,10 @@
       <button id="endBtn" class="btn danger" type="button">End</button>
     </nav>
 
-    <!-- Session summary and history, shown after you press End. -->
-    <section id="summary" class="panel" hidden>
-      <p class="step">Session saved</p>
-      <h1 id="summaryTitle">0/0</h1>
-      <table class="history">
-        <thead><tr><th>Date</th><th>Made</th><th>Shots</th><th>FG%</th></tr></thead>
-        <tbody id="historyBody"></tbody>
-      </table>
-      <div class="actions">
-        <button id="againBtn" class="btn primary" type="button">New session</button>
-      </div>
-    </section>
-
-    <!-- "Camera" button, top-right: opens the camera settings. Shown once the camera is on. -->
+    <!-- "Camera" button, top-right: opens the camera settings. -->
     <button id="settingsBtn" class="btn settings-btn" type="button" hidden>Camera</button>
 
-    <!-- Camera settings sheet. Rows for features your phone doesn't support stay hidden. -->
+    <!-- Camera settings sheet. Rows your phone doesn't support stay hidden. -->
     <section id="settings" class="panel settings" hidden>
       <p class="step">Camera settings</p>
 
@@ -109,6 +109,12 @@
       </div>
 
       <div class="setting check">
+        <input id="ignoreBgInput" type="checkbox" checked>
+        <label for="ignoreBgInput">Ignore ball-coloured background
+          <small>Orange walls, banners or the rim flickering in the light won't be mistaken for the ball.</small></label>
+      </div>
+
+      <div class="setting check">
         <input id="debugInput" type="checkbox">
         <label for="debugInput">Show what the app sees
           <small>Draws the tracking zone and every possible ball it finds.</small></label>
@@ -118,10 +124,134 @@
         <button id="closeSettingsBtn" class="btn primary" type="button">Done</button>
       </div>
     </section>
+
+    <!-- Spot picker: tap where you're shooting from. -->
+    <section id="spotPicker" class="modal" hidden>
+      <div class="modal-card">
+        <svg id="pickCourt" class="court" role="group" aria-label="Half court spots"></svg>
+        <div class="modal-text">
+          <p class="step">Shot chart</p>
+          <h2>Where are you shooting from?</h2>
+          <p id="pickHint" class="muted"></p>
+          <div class="actions">
+            <button id="pickMixedBtn" class="btn" type="button">Mixed spots</button>
+            <button id="pickCancelBtn" class="btn quiet" type="button">Back</button>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
-  <!-- Load the JavaScript files. Order matters: app.js uses the classes from the others. -->
+  <!-- ===================== HOME PAGE ===================== -->
+  <section id="home" class="page">
+    <div class="home">
+      <div class="home-main">
+        <header class="brand">
+          <svg class="mark" aria-hidden="true"><use href="#mark"/></svg>
+          <div>
+            <p class="wordmark">MARKSMAN</p>
+            <p class="wordmark-sub">TRAINING</p>
+          </div>
+        </header>
+        <p class="lede">Live shot tracking for solo practice. Set your phone up courtside, pick your spot and shoot. Every make and miss is counted for you.</p>
+        <div class="home-actions">
+          <button id="startSessionBtn" class="btn primary big" type="button">Start session</button>
+          <button id="pastReportsBtn" class="btn big" type="button">Past reports</button>
+        </div>
+        <p id="homeError" class="error" hidden></p>
+      </div>
+
+      <div class="home-side">
+        <div class="card">
+          <p class="eyebrow">Last session</p>
+          <div id="lastFilled" hidden>
+            <p id="lastDate" class="last-date"></p>
+            <div class="last-row">
+              <span class="big-num"><span id="lastFg">0.0</span><small>%</small></span>
+              <span id="lastMade" class="muted"></span>
+            </div>
+            <p id="allTime" class="muted small"></p>
+          </div>
+          <p id="lastEmpty" class="muted">No sessions yet. Your first report will show up here.</p>
+        </div>
+
+        <div class="card">
+          <p class="eyebrow">Before you start</p>
+          <ol class="checklist">
+            <li><strong>Tripod at 45°</strong> to the hoop, 4–7 m away.</li>
+            <li><strong>Landscape</strong>, with plenty of space above the rim in view.</li>
+            <li><strong>Light behind the phone</strong>, not behind the hoop.</li>
+          </ol>
+        </div>
+        <p class="fineprint">The camera feed stays on this phone. Nothing is recorded or uploaded.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PAST REPORTS LIST ===================== -->
+  <section id="reports" class="page" hidden>
+    <div class="narrow">
+      <div class="page-head">
+        <button id="reportsBackBtn" class="btn quiet" type="button">Back</button>
+        <h1>Past reports</h1>
+      </div>
+      <ul id="reportsList" class="report-list"></ul>
+      <p id="reportsEmpty" class="muted" hidden>No sessions yet.</p>
+    </div>
+  </section>
+
+  <!-- ===================== SESSION REPORT ===================== -->
+  <section id="report" class="page" hidden>
+    <article class="narrow report">
+      <header class="report-head">
+        <div class="brand small">
+          <svg class="mark" aria-hidden="true"><use href="#mark"/></svg>
+          <span>MARKSMAN TRAINING</span>
+        </div>
+        <p class="eyebrow">Session report</p>
+        <h1 id="repDate"></h1>
+        <p id="repTime" class="muted"></p>
+      </header>
+
+      <section class="rep-total">
+        <div class="big-num huge"><span id="repFg">0.0</span><small>%</small></div>
+        <div class="rep-counts">
+          <div><span id="repMade">0</span><label>Makes</label></div>
+          <div><span id="repMiss">0</span><label>Misses</label></div>
+          <div><span id="repShots">0</span><label>Shots</label></div>
+        </div>
+      </section>
+      <p class="rep-best">Best spot: <strong id="repBest">–</strong></p>
+
+      <section class="rep-court">
+        <svg id="repCourt" class="court" role="img" aria-label="Shot chart"></svg>
+        <ul class="legend">
+          <li><span class="key hot"></span>50%+</li>
+          <li><span class="key warm"></span>35–49%</li>
+          <li><span class="key cold"></span>Under 35%</li>
+          <li><span class="key none"></span>Not shot</li>
+        </ul>
+      </section>
+
+      <table class="rep-table">
+        <thead><tr><th>Spot</th><th>Made</th><th>Shots</th><th>%</th></tr></thead>
+        <tbody id="repTableBody"></tbody>
+      </table>
+    </article>
+
+    <div class="narrow report-actions">
+      <span id="repEnded" class="actions">
+        <button id="repNewBtn" class="btn primary" type="button">New session</button>
+        <button id="repHomeBtn" class="btn" type="button">Home</button>
+      </span>
+      <span id="repPast" class="actions" hidden>
+        <button id="repBackBtn" class="btn" type="button">Back to reports</button>
+      </span>
+    </div>
+  </section>
+
   <script src="js/session.js"></script>
+  <script src="js/court.js"></script>
   <script src="js/ballDetector.js"></script>
   <script src="js/shotDetector.js"></script>
   <script src="js/app.js"></script>

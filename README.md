@@ -1,8 +1,20 @@
-# Shot Tracker
+# Marksman Training
 
 A phone web app that watches you shoot through the phone's camera and counts your
 makes, misses and shooting percentage live. No app store, no server: it runs in the
 phone's browser.
+
+## New in version 3
+
+- **Marksman Training** home page: last session, all-time %, setup checklist, past reports.
+- **Shot chart**: pick your spot (corners, wings, top, elbows, free throw, paint, or mixed)
+  before you start and between sets with the **Spot** button.
+- **Session report** when you press End: date and time, total %, makes/misses, best spot,
+  a court chart coloured by % per spot, and a table. Made for screenshots.
+  Old reports are under **Past reports**.
+- **Ignore ball-coloured background** (Camera settings, on by default): an orange wall,
+  banner or rim shimmering in the light is no longer mistaken for the ball
+  (tested: 44 of 58 false frames before, 0 after, ball still found in every frame).
 
 ## How it works (version 2)
 
@@ -37,7 +49,8 @@ version 1 found 0 of 6 makes, version 2 judged all 10 shots correctly.
 |---|---|
 | `index.html` | What's on screen: camera view, scoreboard, setup panel, camera settings, buttons |
 | `style.css` | How it looks |
-| `js/session.js` | Score keeping: record, undo, flip, percentage |
+| `js/session.js` | Score keeping per spot: record, undo, flip, percentage, report data |
+| `js/court.js` | Draws the half court for the spot picker and the report |
 | `js/ballDetector.js` | Finds the ball near the hoop in each camera frame |
 | `js/shotDetector.js` | Decides make or miss from the ball's path |
 | `js/app.js` | Runs everything: setup steps, camera settings, main loop, drawing, history |

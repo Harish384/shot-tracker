@@ -1,70 +1,81 @@
 /*
-  session.js - keeps the score for ONE shooting session.
-  (Same idea as session.py in the Python version, now in JavaScript.)
+  session.js (version 3) - keeps the score for ONE shooting session,
+  now including WHICH SPOT each shot was taken from (for the shot chart).
 
-  JavaScript notes for Python people:
-  - Python "def" is "function" or a method inside a class.
-  - "self" in Python is "this" in JavaScript.
-  - Every statement can end with a semicolon ;
-  - Blocks use { curly braces } instead of indentation.
+  Each shot in history is an object: { result: "make" or "miss", spot: "lw" }
 */
 
 class Session {
-  // constructor = Python's __init__. Runs when you write: new Session()
   constructor() {
-    this.made = 0;              // number of made shots
-    this.attempted = 0;         // number of shots taken
-    this.history = [];          // ["make", "miss", ...] in order
-    this.startedAt = new Date(); // the date and time right now
+    this.made = 0;
+    this.attempted = 0;
+    this.history = [];             // every shot in order
+    this.startedAt = new Date();   // when the session started
+    this.endedAt = null;           // set when you press End
   }
 
-  // Add one shot. made is true for a make, false for a miss.
-  record(made) {
+  // Add one shot. made: true/false. spot: the spot's id, e.g. "lw" (left wing).
+  record(made, spot = "mixed") {
     this.attempted += 1;
-    if (made) {
-      this.made += 1;
-    }
-    // "condition ? a : b" means: if condition then a, else b
-    this.history.push(made ? "make" : "miss");  // push = Python's append
+    if (made) this.made += 1;
+    this.history.push({ result: made ? "make" : "miss", spot });
   }
 
   // Remove the last shot.
   undo() {
-    if (this.history.length === 0) return;      // === means "exactly equal"
-    const last = this.history.pop();            // const = a variable that won't be reassigned
+    if (this.history.length === 0) return;
+    const last = this.history.pop();
     this.attempted -= 1;
-    if (last === "make") this.made -= 1;
+    if (last.result === "make") this.made -= 1;
   }
 
-  // Change the last shot from make to miss or miss to make.
+  // Change the last shot from make to miss or the other way round.
   flipLast() {
-    const i = this.history.length - 1;          // index of the last item
-    if (i < 0) return;
-    if (this.history[i] === "make") {
-      this.history[i] = "miss";
+    const last = this.history[this.history.length - 1];
+    if (!last) return;
+    if (last.result === "make") {
+      last.result = "miss";
       this.made -= 1;
     } else {
-      this.history[i] = "make";
+      last.result = "make";
       this.made += 1;
     }
   }
 
-  // "get" makes this work like a variable: session.percentage (no brackets).
   get percentage() {
-    if (this.attempted === 0) return 0;         // avoid dividing by zero
+    if (this.attempted === 0) return 0;
     return (this.made / this.attempted) * 100;
   }
 
-  // Turn the session into a plain object we can save.
+  /*
+    Count makes and attempts per spot.
+    Returns an object like: { lw: { made: 3, att: 5 }, top: { made: 1, att: 4 } }
+  */
+  spotStats() {
+    const stats = {};
+    for (const shot of this.history) {
+      // If this spot has no entry yet, create one: "||" means "or, if missing, ..."
+      const s = stats[shot.spot] || (stats[shot.spot] = { made: 0, att: 0 });
+      s.att += 1;
+      if (shot.result === "make") s.made += 1;
+    }
+    return stats;
+  }
+
+  end() {
+    this.endedAt = new Date();
+  }
+
+  // A plain object we can save in the phone's storage and show as a report.
   toRecord() {
     return {
-      date: this.startedAt.toISOString(),       // e.g. "2026-10-09T05:58:00.000Z"
+      date: this.startedAt.toISOString(),                 // start time
+      end: (this.endedAt || new Date()).toISOString(),    // end time
       made: this.made,
       attempted: this.attempted,
+      spots: this.spotStats(),
     };
   }
 }
 
-// Lets our Node.js test file load this class. In the browser "module" doesn't exist,
-// so this line is skipped there.
 if (typeof module !== "undefined") module.exports = { Session };

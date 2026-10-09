@@ -38,6 +38,8 @@ class BallDetector {
     this.hueTolerance = 20;
     this.sensitivity = 22;     // how much a pixel must change to count as foreground (lower = more sensitive)
     this.maxWorkWidth = 320;   // the most pixels across we analyse (more = slower)
+    // Ignore changes on background that is already the ball's colour (see findCandidates).
+    this.ignoreBallColourBackground = true;
 
     this.zone = null;          // {x, y, w, h} normalised area we analyse
     this.workW = 0;            // size of the zone in analysis pixels
@@ -72,6 +74,17 @@ class BallDetector {
   static hueDistance(a, b) {
     const d = Math.abs(a - b);
     return Math.min(d, 360 - d);
+  }
+
+  // True if a pixel clearly has the ball's colour (strong colour, near the ball's hue).
+  isBallColour(r, g, b) {
+    // Quick check first: grey/white/black pixels (most of a court) have little
+    // difference between their brightest and darkest channel. Skip the slower maths.
+    const max = Math.max(r, g, b);
+    if (max - Math.min(r, g, b) <= 0.3 * max) return false;
+    const [hue, sat, val] = BallDetector.rgbToHsv(r, g, b);
+    return sat > 0.3 && val > 0.15 &&
+      BallDetector.hueDistance(hue, this.targetHue) <= this.hueTolerance;
   }
 
   /*
@@ -144,6 +157,18 @@ class BallDetector {
         Math.abs(rgb[j + 2] - bg[j + 2]),
       );
       if (change > this.sensitivity) {
+        /*
+          FIX (version 3): ignore background that is the ball's colour.
+          If the background here was ALREADY ball-coloured (an orange wall,
+          banner, cone or the rim) and the pixel is STILL ball-coloured, the
+          "change" is just light shimmering on that surface, not a ball.
+          So we skip it. Only checked for changed pixels, so it stays fast.
+        */
+        if (this.ignoreBallColourBackground &&
+            this.isBallColour(bg[j], bg[j + 1], bg[j + 2]) &&
+            this.isBallColour(rgb[j], rgb[j + 1], rgb[j + 2])) {
+          continue;                      // skip to the next pixel
+        }
         fg[i] = 1;
         fgCount++;
       }
