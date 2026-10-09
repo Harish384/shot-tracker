@@ -140,6 +140,23 @@ body {
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
 }
 
+/* ---------- Camera settings ---------- */
+.settings-btn {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: calc(env(safe-area-inset-right, 0px) + 12px);
+  background: var(--panel);
+}
+.settings { z-index: 2; background: var(--bg); }  /* solid, sits above everything */
+.setting { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.setting label { font-weight: 600; }
+.setting label small { display: block; margin-top: 2px; }
+.setting output { font-family: var(--display); color: var(--amber); font-variant-numeric: tabular-nums; }
+.setting small, .note { font-weight: 400; font-size: 12px; color: var(--muted) !important; }
+.setting input[type="range"] { width: 100%; accent-color: var(--amber); }
+.setting.check { flex-direction: row; align-items: flex-start; gap: 10px; }
+.setting.check input { width: 22px; height: 22px; margin-top: 1px; accent-color: var(--amber); flex: none; }
+
 /* ---------- History table ---------- */
 .history {
   width: 100%; border-collapse: collapse; margin: 6px 0 14px;

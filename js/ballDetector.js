@@ -1,193 +1,291 @@
 /*
-  ballDetector.js - finds the basketball in one camera frame.
+  ballDetector.js (version 2) - finds the basketball near the hoop.
 
-  How it works (3 checks a blob must pass to count as "the ball"):
-    1. COLOUR: the pixels match the ball's colour (orange by default,
-       or whatever colour you tapped during setup).
-    2. SHAPE:  the blob is roughly round, not a long thin strip.
-    3. MOTION: part of the blob changed since the last frame. This is what
-       ignores an orange RIM, orange cones or anything else that stands still.
+  What changed from version 1, and why:
 
-  For speed we shrink every frame to 192 pixels wide before checking it.
-  A phone can check ~28,000 pixels many times per second, but not 2 million.
+  1. ONLY LOOK NEAR THE HOOP, IN MORE DETAIL.
+     Version 1 shrank the WHOLE picture to 192 px wide, so a ball far away
+     became ~4 pixels and disappeared. Now we cut out a "tracking zone"
+     around the hoop (4 rim-widths left and right, 7 above, 3 below) and
+     analyse THAT at up to 320 px wide. The ball is now ~5x bigger to us,
+     and anything moving far from the hoop (people, orange shirts) is ignored.
+
+  2. FIND THE WHOLE BALL BY MOVEMENT, NOT COLOUR.
+     We keep a "background picture" of the zone: what it looks like when
+     nothing is moving. Every new frame is compared with it. Pixels that are
+     very different belong to something new in the scene, the "foreground".
+     The ball is a foreground blob of the right SIZE and SHAPE.
+     Colour is now optional (tap the ball during setup to switch it on).
+
+  3. USE THE RIM AS A RULER.
+     A basketball is about half as wide as a rim (24 cm vs 45 cm). Because
+     you drew a box around the rim, we know how big the ball should look,
+     so blobs that are much too small (noise) or too big (a person) are rejected.
+
+  4. HANDLE FAST, BLURRED BALLS.
+     A fast ball looks like a streak, not a circle. We judge size by the
+     streak's SHORT side and allow it to be up to 3x longer than wide.
+
+  5. PREDICT WHERE THE BALL GOES NEXT.
+     If we know where the ball was and how fast it moved, we pick the blob
+     nearest to where it should be now, instead of just the biggest one.
 */
 
 class BallDetector {
   constructor() {
-    this.workWidth = 192;    // width of the shrunken frame we analyse
-    this.targetHue = 25;     // ball colour as a hue in degrees (0-360). 25 = orange
-    this.hueTolerance = 16;  // how far the hue may be from the target
-    this.minSaturation = 0.35; // 0 = grey, 1 = strong colour
-    this.minBrightness = 0.25; // 0 = black, 1 = bright
-    this.requireMotion = true;
-    this.prevGray = null;    // the previous frame in black and white, for the motion check
-    this.canvas = null;      // created the first time detect() runs
+    this.mode = "shape";       // "shape" = any colour, "colour" = must also match the ball's colour
+    this.targetHue = 25;       // ball colour in degrees (used only in "colour" mode)
+    this.hueTolerance = 20;
+    this.sensitivity = 22;     // how much a pixel must change to count as foreground (lower = more sensitive)
+    this.maxWorkWidth = 320;   // the most pixels across we analyse (more = slower)
+
+    this.zone = null;          // {x, y, w, h} normalised area we analyse
+    this.workW = 0;            // size of the zone in analysis pixels
+    this.workH = 0;
+    this.rimPx = 0;            // rim width in analysis pixels: our ruler
+    this.background = null;    // Float32Array: the average "empty" zone, one number per pixel
+    this.candidates = [];      // every blob that passed the checks, for the detection view
+    this.canvas = null;
   }
 
-  /*
-    Convert a colour from RGB (red, green, blue: 0-255 each) to HSV.
-    Returns [hue 0-360, saturation 0-1, value/brightness 0-1].
-    HSV is better than RGB for "is this orange?" because shadows change
-    brightness a lot but hue only a little.
-  */
+  // Keep a number between lo and hi.
+  static clamp(v, lo, hi) {
+    return Math.min(hi, Math.max(lo, v));
+  }
+
+  // Same as version 1: RGB (0-255) -> [hue 0-360, saturation 0-1, brightness 0-1]
   static rgbToHsv(r, g, b) {
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
-    const d = max - min;                 // how "colourful" the pixel is
-    const v = max / 255;
-    const s = max === 0 ? 0 : d / max;
-    let h = 0;                           // let = a variable we will change
+    const d = max - min;
+    let h = 0;
     if (d !== 0) {
       if (max === r) h = ((g - b) / d) % 6;
       else if (max === g) h = (b - r) / d + 2;
       else h = (r - g) / d + 4;
-      h *= 60;                           // turn the 0-6 range into degrees
+      h *= 60;
       if (h < 0) h += 360;
     }
-    return [h, s, v];
+    return [h, max === 0 ? 0 : d / max, max / 255];
   }
 
-  // Hue is a circle: 350 degrees and 10 degrees are only 20 apart.
   static hueDistance(a, b) {
     const d = Math.abs(a - b);
     return Math.min(d, 360 - d);
   }
 
   /*
-    The core function. Takes raw pixels and returns the ball or null.
-    data: array of pixels, 4 numbers each (R, G, B, A), row by row
-    w, h: width and height in pixels
-    Returns { x, y, r } normalised 0-1, or null.
+    Work out the tracking zone from the rim box.
+    hoop: normalised {x, y, w, h}. videoW/videoH: camera size in pixels.
   */
-  detectPixels(data, w, h) {
-    const n = w * h;                          // number of pixels
-    const mask = new Uint8Array(n);           // 1 = ball-coloured pixel, 0 = not
-    const gray = new Uint8Array(n);           // black-and-white copy, for motion
-    const moving = new Uint8Array(n);         // 1 = this pixel changed since last frame
-    const prev = this.prevGray;
+  setHoop(hoop, videoW, videoH) {
+    const C = BallDetector.clamp;
+    // hoop.w is a fraction of the WIDTH. To measure UP and DOWN in the same
+    // real-world distance we convert it to a fraction of the HEIGHT.
+    const rimW = hoop.w;
+    const rimWy = hoop.w * (videoW / videoH);
+    const x0 = C(hoop.x - 4 * rimW, 0, 1);
+    const x1 = C(hoop.x + hoop.w + 4 * rimW, 0, 1);
+    const y0 = C(hoop.y - 7 * rimWy, 0, 1);
+    const y1 = C(hoop.y + hoop.h + 3 * rimWy, 0, 1);
+    this.zone = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 
-    // Pass 1: look at every pixel once.
-    for (let i = 0; i < n; i++) {
-      const r = data[i * 4];
-      const g = data[i * 4 + 1];
-      const b = data[i * 4 + 2];
-      gray[i] = (r + g + b) / 3;
-      if (prev && Math.abs(gray[i] - prev[i]) > 18) moving[i] = 1;
-
-      const [hue, sat, val] = BallDetector.rgbToHsv(r, g, b);
-      if (sat >= this.minSaturation && val >= this.minBrightness &&
-          BallDetector.hueDistance(hue, this.targetHue) <= this.hueTolerance) {
-        mask[i] = 1;
-      }
-    }
-    this.prevGray = gray;                     // remember this frame for next time
-
-    // Pass 2: group touching ball-coloured pixels into "blobs" (flood fill).
-    // labels[i] = which blob pixel i belongs to (0 = none yet).
-    const labels = new Int32Array(n);
-    const stack = new Int32Array(n);          // pixels waiting to be visited
-    let best = null;
-    let label = 0;
-
-    for (let start = 0; start < n; start++) {
-      if (!mask[start] || labels[start]) continue;   // not ball-coloured, or already in a blob
-      label += 1;
-      let top = 0;
-      stack[top++] = start;
-      labels[start] = label;
-      // Measurements for this blob:
-      let count = 0, sumX = 0, sumY = 0, movingCount = 0;
-      let minX = w, maxX = 0, minY = h, maxY = 0;
-
-      while (top > 0) {
-        const p = stack[--top];               // take a pixel off the stack
-        const x = p % w;                      // % = remainder: column number
-        const y = (p - x) / w;                // row number
-        count++; sumX += x; sumY += y; movingCount += moving[p];
-        if (x < minX) minX = x; if (x > maxX) maxX = x;
-        if (y < minY) minY = y; if (y > maxY) maxY = y;
-        // Check the 4 neighbours: left, right, up, down.
-        if (x > 0     && mask[p - 1] && !labels[p - 1]) { labels[p - 1] = label; stack[top++] = p - 1; }
-        if (x < w - 1 && mask[p + 1] && !labels[p + 1]) { labels[p + 1] = label; stack[top++] = p + 1; }
-        if (y > 0     && mask[p - w] && !labels[p - w]) { labels[p - w] = label; stack[top++] = p - w; }
-        if (y < h - 1 && mask[p + w] && !labels[p + w]) { labels[p + w] = label; stack[top++] = p + w; }
-      }
-
-      // Check 2: shape. A circle fills about 78% of its bounding box.
-      const bw = maxX - minX + 1;
-      const bh = maxY - minY + 1;
-      const aspect = bw / bh;                 // 1.0 = as wide as tall
-      const fill = count / (bw * bh);
-      if (count < 5) continue;                // too tiny: noise
-      if (aspect < 0.5 || aspect > 2) continue;
-      if (fill < 0.45) continue;
-      // Check 3: motion. Need some changed pixels (skipped on the very first frame).
-      if (this.requireMotion && prev && movingCount / count < 0.08) continue;
-
-      if (!best || count > best.count) {      // keep the biggest blob that passed
-        best = { count, cx: sumX / count, cy: sumY / count, size: Math.max(bw, bh) };
-      }
-    }
-
-    if (!best) return null;
-    return {
-      x: (best.cx + 0.5) / w,                 // +0.5 = centre of the pixel
-      y: (best.cy + 0.5) / h,
-      r: best.size / 2 / w,
-    };
+    // Scale the zone down only if it is wider than maxWorkWidth (never enlarge it).
+    const zoneW = this.zone.w * videoW;
+    const zoneH = this.zone.h * videoH;
+    const scale = Math.min(1, this.maxWorkWidth / zoneW);
+    this.workW = Math.max(8, Math.round(zoneW * scale));
+    this.workH = Math.max(8, Math.round(zoneH * scale));
+    this.rimPx = rimW * videoW * scale;
+    this.resetBackground();
   }
 
-  // Browser only: grab the current video frame, shrink it, and detect.
-  detect(video) {
-    const pixels = this.grab(video);
-    if (!pixels) return null;
-    return this.detectPixels(pixels.data, pixels.width, pixels.height);
-  }
-
-  // Draw the video onto a small hidden canvas and read its pixels.
-  grab(video) {
-    if (!video.videoWidth) return null;       // camera not ready yet
-    const w = this.workWidth;
-    const h = Math.round((video.videoHeight / video.videoWidth) * w);
-    if (!this.canvas) {
-      this.canvas = document.createElement("canvas");
-      // willReadFrequently tells the browser we will read pixels often (faster).
-      this.ctx = this.canvas.getContext("2d", { willReadFrequently: true });
-    }
-    if (this.canvas.width !== w || this.canvas.height !== h) {
-      this.canvas.width = w;
-      this.canvas.height = h;
-      this.prevGray = null;                   // size changed: old frame is useless
-    }
-    this.ctx.drawImage(video, 0, 0, w, h);
-    return this.ctx.getImageData(0, 0, w, h);
+  // Forget the background, e.g. after the brightness changes. It rebuilds in a moment.
+  resetBackground() {
+    this.background = null;
   }
 
   /*
-    Setup step: the user taps the ball. Read the colour around that point
-    (nx, ny normalised) and use its hue as the new target.
-    Returns the colour as an "rgb(...)" string so the app can show a swatch,
-    or null if the tapped spot isn't colourful enough.
+    The core: find ball candidates in the zone's pixels.
+    data: RGBA pixels of the zone, w x h.
+    Returns a list of candidates in ZONE pixel coordinates (best guesses first).
   */
-  sampleColour(video, nx, ny) {
-    const pixels = this.grab(video);
-    if (!pixels) return null;
-    const { data, width, height } = pixels;   // "destructuring": pull 3 values out at once
-    const cx = Math.round(nx * width);
-    const cy = Math.round(ny * height);
-    let r = 0, g = 0, b = 0, n = 0;
-    for (let y = cy - 2; y <= cy + 2; y++) {  // a 5x5 square around the tap
-      for (let x = cx - 2; x <= cx + 2; x++) {
-        if (x < 0 || y < 0 || x >= width || y >= height) continue;
-        const i = (y * width + x) * 4;
-        r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
+  findCandidates(data, w, h) {
+    const n = w * h;
+    const gray = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      gray[i] = (data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2]) / 3;
+    }
+
+    // First frame (or after a reset): this frame becomes the background.
+    if (!this.background || this.background.length !== n) {
+      this.background = gray;
+      return [];
+    }
+
+    // 1. Foreground mask: pixels that differ a lot from the background.
+    const bg = this.background;
+    const fg = new Uint8Array(n);
+    let fgCount = 0;
+    for (let i = 0; i < n; i++) {
+      if (Math.abs(gray[i] - bg[i]) > this.sensitivity) {
+        fg[i] = 1;
+        fgCount++;
       }
     }
-    if (n === 0) return null;
-    r /= n; g /= n; b /= n;                   // average colour
+
+    // If more than a third of the zone "changed" at once, the camera's brightness
+    // jumped (or the phone moved). Start the background again instead of
+    // seeing hundreds of fake blobs.
+    if (fgCount > n * 0.35) {
+      this.background = gray;
+      return [];
+    }
+
+    // 2. Update the background slowly so it follows gentle light changes.
+    // Background pixels learn fast (10%), foreground pixels very slowly (0.5%),
+    // so the moving ball does not get "learned" into the background.
+    for (let i = 0; i < n; i++) {
+      bg[i] += (fg[i] ? 0.005 : 0.1) * (gray[i] - bg[i]);
+    }
+
+    // 3. Group foreground pixels into blobs (flood fill, like version 1).
+    const labels = new Int32Array(n);
+    const stack = new Int32Array(n);
+    const expected = this.rimPx * 0.53;            // expected ball diameter from the rim ruler
+    const minSide = Math.max(2, this.rimPx * 0.2); // smallest acceptable ball (far away)
+    const maxSide = Math.max(4, this.rimPx * 1.1); // biggest acceptable ball (close to camera)
+    const found = [];
+    let label = 0;
+
+    for (let start = 0; start < n; start++) {
+      if (!fg[start] || labels[start]) continue;
+      label++;
+      let top = 0;
+      stack[top++] = start;
+      labels[start] = label;
+      let count = 0, sumX = 0, sumY = 0, colourCount = 0;
+      let minX = w, maxX = 0, minY = h, maxY = 0;
+
+      while (top > 0) {
+        const p = stack[--top];
+        const x = p % w;
+        const y = (p - x) / w;
+        count++; sumX += x; sumY += y;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (this.mode === "colour") {
+          const [hue, sat, val] = BallDetector.rgbToHsv(data[p * 4], data[p * 4 + 1], data[p * 4 + 2]);
+          // Loose limits: a ball in glare or shade is pale or dark but keeps roughly its hue.
+          if (sat > 0.15 && val > 0.12 && BallDetector.hueDistance(hue, this.targetHue) <= this.hueTolerance) {
+            colourCount++;
+          }
+        }
+        if (x > 0     && fg[p - 1] && !labels[p - 1]) { labels[p - 1] = label; stack[top++] = p - 1; }
+        if (x < w - 1 && fg[p + 1] && !labels[p + 1]) { labels[p + 1] = label; stack[top++] = p + 1; }
+        if (y > 0     && fg[p - w] && !labels[p - w]) { labels[p - w] = label; stack[top++] = p - w; }
+        if (y < h - 1 && fg[p + w] && !labels[p + w]) { labels[p + w] = label; stack[top++] = p + w; }
+      }
+
+      // 4. The checks.
+      const bw = maxX - minX + 1;
+      const bh = maxY - minY + 1;
+      const shortSide = Math.min(bw, bh);
+      const longSide = Math.max(bw, bh);
+      const fill = count / (bw * bh);                 // how solid the blob is
+      if (shortSide < minSide || shortSide > maxSide) continue;  // wrong size for a ball
+      if (longSide / shortSide > 3) continue;         // too stretched, even for a blurred ball
+      if (fill < 0.4) continue;                       // too hollow/stringy (e.g. the net, an arm)
+      if (this.mode === "colour" && colourCount / count < 0.25) continue;  // wrong colour
+
+      // Score: solid and close to the expected ball size scores highest.
+      const sizeError = Math.abs(shortSide / expected - 1);
+      found.push({
+        x: sumX / count + 0.5,
+        y: sumY / count + 0.5,
+        size: shortSide,
+        score: fill - 0.5 * sizeError,
+        box: [minX, minY, bw, bh],
+      });
+    }
+
+    // Best score first. .sort() with this function puts higher scores at the front.
+    found.sort((a, b) => b.score - a.score);
+    return found;
+  }
+
+  /*
+    Browser: grab the zone from the video and find the ball.
+    predicted: optional normalised {x, y} where the ball should be now.
+    Returns normalised {x, y, r} or null.
+  */
+  detect(video, predicted = null) {
+    if (!this.zone || !video.videoWidth) return null;
+    if (!this.canvas) {
+      this.canvas = document.createElement("canvas");
+      this.ctx = this.canvas.getContext("2d", { willReadFrequently: true });
+    }
+    if (this.canvas.width !== this.workW || this.canvas.height !== this.workH) {
+      this.canvas.width = this.workW;
+      this.canvas.height = this.workH;
+    }
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const z = this.zone;
+    // drawImage(source, sx, sy, sw, sh, dx, dy, dw, dh):
+    // copy the rectangle (sx, sy, sw, sh) of the video into a (dw x dh) canvas.
+    this.ctx.drawImage(video, z.x * vw, z.y * vh, z.w * vw, z.h * vh, 0, 0, this.workW, this.workH);
+    const img = this.ctx.getImageData(0, 0, this.workW, this.workH);
+    return this.pick(this.findCandidates(img.data, this.workW, this.workH), predicted);
+  }
+
+  /*
+    Turn zone-pixel candidates into normalised positions and choose one.
+    Kept separate from detect() so the test file can use it without a browser.
+  */
+  pick(found, predicted) {
+    const z = this.zone;
+    this.candidates = found.map((c) => ({     // .map makes a new list by converting every item
+      x: z.x + (c.x / this.workW) * z.w,
+      y: z.y + (c.y / this.workH) * z.h,
+      r: (c.size / 2 / this.workW) * z.w,
+      box: c.box,
+    }));
+    if (this.candidates.length === 0) return null;
+    if (!predicted) return this.candidates[0];
+
+    // With a prediction: take the candidate closest to it, if it's close enough.
+    // "Close enough" = within 3 rim-widths.
+    const rimW = (this.rimPx / this.workW) * z.w;
+    let best = null, bestDist = Infinity;
+    for (const c of this.candidates) {
+      const d = Math.hypot(c.x - predicted.x, c.y - predicted.y);  // straight-line distance
+      if (d < bestDist) { bestDist = d; best = c; }
+    }
+    return bestDist <= rimW * 3 ? best : this.candidates[0];
+  }
+
+  /*
+    Setup: the user taps the ball. Read its colour from a small square around
+    the tap at full camera resolution, and switch to "colour" mode.
+  */
+  sampleColour(video, nx, ny) {
+    if (!video.videoWidth) return null;
+    const c = document.createElement("canvas");
+    c.width = c.height = 9;
+    const cctx = c.getContext("2d", { willReadFrequently: true });
+    const vw = video.videoWidth, vh = video.videoHeight;
+    // Copy a square 1% of the picture's width around the tap.
+    const s = Math.max(6, vw * 0.01);
+    cctx.drawImage(video, nx * vw - s / 2, ny * vh - s / 2, s, s, 0, 0, 9, 9);
+    const d = cctx.getImageData(0, 0, 9, 9).data;
+    let r = 0, g = 0, b = 0;
+    for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+    const px = d.length / 4;
+    r /= px; g /= px; b /= px;
     const [hue, sat] = BallDetector.rgbToHsv(r, g, b);
-    if (sat < 0.2) return null;               // too grey to track reliably
+    if (sat < 0.12) return null;              // grey or white: not useful as a colour
     this.targetHue = hue;
+    this.mode = "colour";
     return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
   }
 }

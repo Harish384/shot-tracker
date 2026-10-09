@@ -72,6 +72,49 @@
         <button id="againBtn" class="btn primary" type="button">New session</button>
       </div>
     </section>
+
+    <!-- "Camera" button, top-right: opens the camera settings. Shown once the camera is on. -->
+    <button id="settingsBtn" class="btn settings-btn" type="button" hidden>Camera</button>
+
+    <!-- Camera settings sheet. Rows for features your phone doesn't support stay hidden. -->
+    <section id="settings" class="panel settings" hidden>
+      <p class="step">Camera settings</p>
+
+      <div class="setting" id="zoomRow" hidden>
+        <label for="zoomInput">Zoom <output id="zoomOut"></output></label>
+        <input id="zoomInput" type="range">
+        <small id="zoomNote">Set zoom before you mark the rim.</small>
+      </div>
+
+      <div class="setting" id="brightRow" hidden>
+        <label for="brightInput">Brightness <output id="brightOut"></output></label>
+        <input id="brightInput" type="range">
+      </div>
+
+      <div class="setting check" id="lockRow" hidden>
+        <input id="lockInput" type="checkbox" checked>
+        <label for="lockInput">Lock brightness while tracking
+          <small>Stops the phone changing the light by itself when you move.</small></label>
+      </div>
+
+      <p id="noCameraControls" class="note" hidden>This browser doesn't let websites change the camera's zoom or brightness. Chrome on Android usually does.</p>
+
+      <div class="setting">
+        <label for="sensInput">Movement sensitivity <output id="sensOut"></output></label>
+        <input id="sensInput" type="range" min="1" max="10" step="1" value="5">
+        <small>Higher finds a faint or far ball; lower ignores more noise.</small>
+      </div>
+
+      <div class="setting check">
+        <input id="debugInput" type="checkbox">
+        <label for="debugInput">Show what the app sees
+          <small>Draws the tracking zone and every possible ball it finds.</small></label>
+      </div>
+
+      <div class="actions">
+        <button id="closeSettingsBtn" class="btn primary" type="button">Done</button>
+      </div>
+    </section>
   </main>
 
   <!-- Load the JavaScript files. Order matters: app.js uses the classes from the others. -->
