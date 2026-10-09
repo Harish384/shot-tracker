@@ -112,23 +112,38 @@ class BallDetector {
   */
   findCandidates(data, w, h) {
     const n = w * h;
-    const gray = new Float32Array(n);
+    /*
+      FIX (version 2.2): compare COLOUR, not just brightness.
+      Before, every pixel was turned into one grey number, so an orange ball
+      in front of grey concrete of the same brightness looked identical to it
+      and was invisible. Now we keep Red, Green and Blue separately
+      (3 numbers per pixel) and look at the biggest change of the three.
+    */
+    const rgb = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) {
-      gray[i] = (data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2]) / 3;
+      rgb[i * 3] = data[i * 4];          // red
+      rgb[i * 3 + 1] = data[i * 4 + 1];  // green
+      rgb[i * 3 + 2] = data[i * 4 + 2];  // blue
     }
 
     // First frame (or after a reset): this frame becomes the background.
-    if (!this.background || this.background.length !== n) {
-      this.background = gray;
+    if (!this.background || this.background.length !== n * 3) {
+      this.background = rgb;
       return [];
     }
 
-    // 1. Foreground mask: pixels that differ a lot from the background.
+    // 1. Foreground mask: pixels where red, green OR blue changed a lot.
     const bg = this.background;
     const fg = new Uint8Array(n);
     let fgCount = 0;
     for (let i = 0; i < n; i++) {
-      if (Math.abs(gray[i] - bg[i]) > this.sensitivity) {
+      const j = i * 3;
+      const change = Math.max(
+        Math.abs(rgb[j] - bg[j]),
+        Math.abs(rgb[j + 1] - bg[j + 1]),
+        Math.abs(rgb[j + 2] - bg[j + 2]),
+      );
+      if (change > this.sensitivity) {
         fg[i] = 1;
         fgCount++;
       }
@@ -138,7 +153,7 @@ class BallDetector {
     // jumped (or the phone moved). Start the background again instead of
     // seeing hundreds of fake blobs.
     if (fgCount > n * 0.35) {
-      this.background = gray;
+      this.background = rgb;
       return [];
     }
 
@@ -146,7 +161,11 @@ class BallDetector {
     // Background pixels learn fast (10%), foreground pixels very slowly (0.5%),
     // so the moving ball does not get "learned" into the background.
     for (let i = 0; i < n; i++) {
-      bg[i] += (fg[i] ? 0.005 : 0.1) * (gray[i] - bg[i]);
+      const rate = fg[i] ? 0.005 : 0.1;
+      for (let c = 0; c < 3; c++) {
+        const j = i * 3 + c;
+        bg[j] += rate * (rgb[j] - bg[j]);
+      }
     }
 
     // 3. Group foreground pixels into blobs (flood fill, like version 1).

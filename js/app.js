@@ -44,6 +44,11 @@ let seenB = null;                 // newest sighting { x, y, t }
 // The camera itself.
 let track = null;                 // the video "track" of the camera stream
 let caps = {};                    // what this camera allows us to change (zoom, exposure...)
+let startingCamera = false;       // true while waiting for the camera (stops double-taps)
+let hoopAspect = 0;               // picture width/height when the rim was marked (detects rotation)
+let settingsOpen = false;         // true while the camera settings sheet is showing
+let panelWasOpen = false;         // was the setup panel showing before settings opened?
+let stepBeforeLost = null;        // which step we were on when the camera stopped
 
 const HISTORY_KEY = "shot-tracker-history";
 
@@ -79,7 +84,10 @@ function resizeCanvas() {
 window.addEventListener("resize", resizeCanvas);
 
 function showPanel({ label, title, text, primary, secondary }) {
-  $("panel").hidden = false;
+  // While settings are open the panel stays hidden; it comes back when they close.
+  if (settingsOpen) panelWasOpen = true;
+  else $("panel").hidden = false;
+  $("panel").classList.remove("top");
   $("stepLabel").textContent = label;
   $("panelTitle").textContent = title;
   $("panelText").textContent = text;
@@ -206,30 +214,52 @@ $("lockInput").addEventListener("change", (e) => {
 });
 $("sensInput").addEventListener("input", applySensitivity);
 
-$("settingsBtn").addEventListener("click", () => {
+/*
+  FIX (bug 1): tapping Camera twice used to hide the setup panel for good.
+  Now the Camera button hides itself while the sheet is open, and we never
+  "open" the sheet a second time, so we always remember the panel correctly.
+*/
+function openSettings() {
+  if (settingsOpen) return;                 // already open: do nothing
+  settingsOpen = true;
   // Zoom changes where the rim is on screen, so only allow it before the rim is marked.
   const zoomAllowed = step === "rim";
   $("zoomInput").disabled = !zoomAllowed;
   $("zoomNote").textContent = zoomAllowed
     ? "Zoom in so the hoop looks bigger, then mark the rim."
     : "Zoom is locked after you mark the rim. Use Redo setup to change it.";
-  // Hide the setup panel underneath while the settings are open, then bring it back.
-  panelWasOpen = !$("panel").hidden;
+  panelWasOpen = !$("panel").hidden;        // remember, then hide the panel underneath
   $("panel").hidden = true;
+  $("settingsBtn").hidden = true;
   $("settings").hidden = false;
-});
-let panelWasOpen = false;
-$("closeSettingsBtn").addEventListener("click", () => {
+}
+
+function closeSettings() {
+  if (!settingsOpen) return;
+  settingsOpen = false;
   $("settings").hidden = true;
+  $("settingsBtn").hidden = false;
   if (panelWasOpen) $("panel").hidden = false;
-});
+}
+
+$("settingsBtn").addEventListener("click", openSettings);
+$("closeSettingsBtn").addEventListener("click", closeSettings);
 
 // ---------- 5. The steps ----------
 
-async function startCamera() {
+/*
+  Turn the camera on. Returns true if it worked.
+  Used by "Start camera" and by "Restart camera" after the phone stopped it.
+*/
+async function openCamera() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     showError("This browser can't use the camera here. Open the app from its https:// link.");
-    return;
+    return false;
+  }
+  // If an old camera stream exists, switch it off first so we never run two.
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach((t) => t.stop());
+    video.srcObject = null;
   }
   try {
     // Ask for a sharp picture (up to 1920x1080) and up to 60 frames per second.
@@ -245,6 +275,8 @@ async function startCamera() {
     });
     video.srcObject = stream;
     track = stream.getVideoTracks()[0];
+    // FIX (bug 3): if the phone stops the camera (other app, screen lock), tell us.
+    track.addEventListener("ended", cameraLost);
     await video.play();
   } catch (err) {
     if (err.name === "NotAllowedError") {
@@ -252,25 +284,110 @@ async function startCamera() {
     } else {
       showError("Couldn't start the camera: " + err.message);
     }
-    return;
+    return false;
   }
-  try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audio = null; }
   setupCameraControls();
   applySensitivity();
-  $("settingsBtn").hidden = false;
   resizeCanvas();
+  return true;
+}
+
+async function startCamera() {
+  // FIX (bug 4): ignore extra taps while we're already waiting for the camera.
+  if (startingCamera) return;
+  startingCamera = true;
+  $("primaryBtn").disabled = true;
+  const ok = await openCamera();
+  startingCamera = false;
+  $("primaryBtn").disabled = false;
+  if (!ok) return;
+  if (!audio) {
+    try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audio = null; }
+  }
+  $("settingsBtn").hidden = false;
   goToRim();
 }
+
+/*
+  FIX (bug 3): the camera stopped (ended), or the picture froze.
+  Pause everything and offer a Restart button. The score so far is kept.
+*/
+function cameraLost() {
+  if (step === "start" || step === "lost" || step === "summary") return;
+  stepBeforeLost = step;
+  step = "lost";
+  $("ballStatus").hidden = true;
+  closeSettings();
+  $("controls").hidden = true;
+  $("settingsBtn").hidden = true;
+  showPanel({
+    label: "Paused",
+    title: "Camera stopped",
+    text: "Your phone switched the camera off (another app, or the screen locked). Your score so far is kept. Keep the phone in the same place and restart.",
+    primary: "Restart camera",
+  });
+}
+
+async function restartCamera() {
+  if (startingCamera) return;
+  startingCamera = true;
+  $("primaryBtn").disabled = true;
+  const ok = await openCamera();
+  startingCamera = false;
+  $("primaryBtn").disabled = false;
+  if (!ok) return;
+  $("settingsBtn").hidden = false;
+  const turned = hoop && Math.abs(video.videoWidth / video.videoHeight - hoopAspect) > 0.05;
+  if (stepBeforeLost === "tracking" && hoop && !turned) {
+    startTracking();                     // carry on with the same score
+  } else if (stepBeforeLost === "ready" && hoop && !turned) {
+    goToReady();
+  } else if (stepBeforeLost === "summary") {
+    step = "summary";
+    $("panel").hidden = true;
+    $("summary").hidden = false;
+  } else {
+    goToRim();
+  }
+}
+
+// If the page comes back into view and the camera is paused or gone, react.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || step === "start" || step === "lost") return;
+  if (!track || track.readyState === "ended") {
+    cameraLost();
+  } else if (video.paused) {
+    video.play().catch(() => cameraLost());   // try to un-freeze the picture
+  }
+});
+
+/*
+  FIX (bug 5): the phone was rotated after the rim was marked.
+  The video's "resize" event fires when the picture's width/height change.
+*/
+video.addEventListener("resize", () => {
+  if (!hoop || !video.videoWidth || step === "lost") return;
+  const aspect = video.videoWidth / video.videoHeight;
+  if (Math.abs(aspect - hoopAspect) > 0.05) {
+    closeSettings();
+    $("controls").hidden = true;
+    goToRim();
+    showError("The picture turned (phone rotated). Mark the rim again. Your score so far is kept.");
+  }
+});
 
 function goToRim() {
   step = "rim";
   hoop = null;
+  $("ballStatus").hidden = true;
   $("swatchRow").hidden = true;
+  $("panel").classList.remove("top");
   showPanel({
     label: "Step 1 of 2",
     title: "Mark the rim",
     text: "Far from the hoop? Tap Camera and zoom in first. Then drag a box tightly around the rim. Keep the phone still from now on.",
     primary: null,
+    secondary: "Move this panel up",       // FIX (bug 7): uncover the bottom of the picture
   });
 }
 
@@ -288,24 +405,41 @@ function goToBall() {
 
 function goToReady() {
   step = "ready";
+  // NEW (version 2.2): start detecting now, without counting, so you can test it.
+  if (video.videoWidth) detector.setHoop(hoop, video.videoWidth, video.videoHeight);
+  trail.length = 0;
   showPanel({
     label: "Ready",
-    title: "Start shooting",
-    text: "Shots that go higher than the rim are counted. Use Undo or Flip if the app gets one wrong.",
+    title: "Test, then start",
+    text: "Test first: throw the ball up near the hoop. A green circle and \"Ball seen\" mean the app can see it. Nothing is counted until you press Start tracking.",
     primary: "Start tracking",
     secondary: "Redo setup",
   });
 }
 
+// Show "Ball seen" for a moment after each sighting, so it doesn't flicker.
+let lastSeenAt = -Infinity;
+function updateBallStatus(ball, now) {
+  if (ball) lastSeenAt = now;
+  const seen = now - lastSeenAt < 400;
+  const el = $("ballStatus");
+  el.hidden = !(step === "ready" || step === "tracking");
+  el.textContent = seen ? "Ball seen" : "Looking for the ball";
+  el.classList.toggle("seen", seen);       // adds the class if seen, removes it if not
+}
+
 function startTracking() {
+  if (!video.videoWidth) { cameraLost(); return; }   // no picture: can't track
   step = "tracking";
-  session = new Session();
+  // Keep the score if we're coming back from a camera restart or a rotation.
+  // "New session" sets session to null, so a fresh one starts there.
+  if (!session) session = new Session();
   shots = new ShotDetector(hoop);
   detector.setHoop(hoop, video.videoWidth, video.videoHeight);   // work out the tracking zone
   trail.length = 0;
   seenA = seenB = null;
+  closeSettings();
   $("panel").hidden = true;
-  $("settings").hidden = true;
   $("scoreboard").hidden = false;
   $("controls").hidden = false;
   updateScoreboard();
@@ -320,9 +454,10 @@ function endSession() {
     list.unshift(session.toRecord());
     saveHistory(list.slice(0, 30));
   }
+  closeSettings();
+  $("ballStatus").hidden = true;
   $("controls").hidden = true;
   $("scoreboard").hidden = true;
-  $("settings").hidden = true;
   $("summaryTitle").textContent =
     `${session.made}/${session.attempted} · ${session.percentage.toFixed(1)}%`;
   renderHistory(loadHistory());
@@ -391,7 +526,11 @@ function predict(now) {
 }
 
 function processFrame(now) {
-  if (step !== "tracking") return;
+  // Detect in the Ready step (test only) and while tracking (counting).
+  if (step !== "tracking" && step !== "ready") {
+    $("ballStatus").hidden = true;
+    return;
+  }
   const ball = detector.detect(video, predict(now));
   lastBall = ball;
   if (ball) {
@@ -400,6 +539,8 @@ function processFrame(now) {
     trail.push(ball);
     if (trail.length > 20) trail.shift();
   }
+  updateBallStatus(ball, now);
+  if (step !== "tracking") return;         // Ready step: test only, don't count
   const result = shots.update(now, ball ? { x: ball.x, y: ball.y } : null);
   if (result) onShot(result);
 }
@@ -449,10 +590,11 @@ function draw() {
     ctx.stroke();
   }
 
-  if (step !== "tracking") return;
+  if (step !== "tracking" && step !== "ready") return;
 
   // Detection view: the tracking zone and every candidate the detector found.
-  if ($("debugInput").checked && detector.zone) {
+  // Always shown in the Ready (test) step; while tracking only if switched on.
+  if ((step === "ready" || $("debugInput").checked) && detector.zone) {
     const z = detector.zone;
     const a = toScreen(z.x, z.y);
     const b = toScreen(z.x + z.w, z.y + z.h);
@@ -492,6 +634,8 @@ function draw() {
 // ---------- 9. Touch input on the camera view ----------
 
 overlay.addEventListener("pointerdown", (e) => {
+  // FIX (bug 2): while the settings sheet is open, touches on the picture do nothing.
+  if (settingsOpen) return;
   if (step === "rim") {
     dragStart = { x: e.offsetX, y: e.offsetY };
     dragNow = dragStart;
@@ -524,7 +668,19 @@ overlay.addEventListener("pointerup", () => {
     return;
   }
   hoop = { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
+  hoopAspect = video.videoWidth / video.videoHeight;   // remember the picture shape (bug 5)
   goToBall();
+});
+
+// FIX (bug 6): the phone interrupted the drag (system gesture, notification...).
+// Throw the half-drawn box away instead of leaving it stuck on screen.
+function cancelDrag() {
+  dragStart = dragNow = null;
+}
+overlay.addEventListener("pointercancel", cancelDrag);
+overlay.addEventListener("lostpointercapture", () => {
+  // Capture is also released after a normal pointerup, which already cleared the drag.
+  if (dragStart) cancelDrag();
 });
 
 // ---------- 10. Buttons ----------
@@ -532,10 +688,15 @@ overlay.addEventListener("pointerup", () => {
 $("primaryBtn").addEventListener("click", () => {
   if (step === "start") startCamera();
   else if (step === "ready") startTracking();
+  else if (step === "lost") restartCamera();
 });
 
 $("secondaryBtn").addEventListener("click", () => {
-  if (step === "ball") {
+  if (step === "rim") {
+    // FIX (bug 7): flip the panel between the bottom and the top of the screen.
+    const top = $("panel").classList.toggle("top");   // toggle returns true if now "top"
+    $("secondaryBtn").textContent = top ? "Move this panel down" : "Move this panel up";
+  } else if (step === "ball") {
     detector.mode = "shape";           // skip colour: shape + movement only
     goToReady();
   } else if (step === "ready") {
@@ -550,6 +711,7 @@ $("addMissBtn").addEventListener("click", () => onShot("miss"));
 $("endBtn").addEventListener("click", endSession);
 $("againBtn").addEventListener("click", () => {
   $("summary").hidden = true;
+  session = null;                        // a brand-new score for the next session
   goToReady();
 });
 

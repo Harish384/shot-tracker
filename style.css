@@ -69,6 +69,21 @@ body {
   color: var(--muted);
 }
 
+/* ---------- "Ball seen" indicator ---------- */
+.ball-status {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 92px);   /* just under the scoreboard */
+  left: calc(env(safe-area-inset-left, 0px) + 12px);
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px; font-weight: 600;
+  pointer-events: none;
+}
+.ball-status.seen { color: var(--make); border-color: var(--make); }
+
 /* ---------- MAKE / MISS banner ---------- */
 .banner {
   position: absolute; left: 50%; top: 22%;
@@ -97,6 +112,13 @@ body {
   border-radius: 8px;
   max-height: 80%; overflow-y: auto;
 }
+/* The setup panel moved to the top of the screen ("Move this panel up"). */
+.panel.top {
+  bottom: auto;
+  top: calc(env(safe-area-inset-top, 0px) + 64px);   /* below the Camera button */
+}
+.btn:disabled { opacity: 0.5; }
+
 .step {
   margin: 0;
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
