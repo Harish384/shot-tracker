@@ -1,0 +1,83 @@
+<!doctype html>
+<!--
+  index.html - the STRUCTURE of the app (what's on the screen).
+  style.css decides how it looks. The js/ files decide how it behaves.
+-->
+<html lang="en">
+<head>
+  <!-- charset: which text encoding the file uses -->
+  <meta charset="utf-8">
+  <!-- viewport: fit the page to the phone's width and don't let pinch-zoom mess up the layout -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!-- theme-color: colours the phone's browser bar to match the app -->
+  <meta name="theme-color" content="#0d1117">
+  <title>Shot Tracker</title>
+  <!-- Load the font from Google Fonts. If there's no internet, the fallback font is used. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700;800&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- The "stage" holds the live camera picture and a transparent drawing layer on top. -->
+  <main id="stage">
+    <!-- playsinline: play inside the page on iPhone (not fullscreen). muted: required for autoplay. -->
+    <video id="camera" playsinline muted></video>
+    <!-- We draw the hoop box, ball circle and trail on this canvas. -->
+    <canvas id="overlay"></canvas>
+
+    <!-- Scoreboard, top-left. Hidden until tracking starts. -->
+    <section id="scoreboard" class="scoreboard" hidden>
+      <div class="fg"><span id="fgValue">0.0</span><small>%</small></div>
+      <div class="counts">
+        <div><span id="madeValue">0</span><label>Makes</label></div>
+        <div><span id="missValue">0</span><label>Misses</label></div>
+        <div><span id="shotsValue">0</span><label>Shots</label></div>
+      </div>
+    </section>
+
+    <!-- Big MAKE / MISS message after each shot. -->
+    <div id="banner" class="banner" hidden></div>
+
+    <!-- Setup instructions. The text changes at each step. -->
+    <section id="panel" class="panel">
+      <p class="step" id="stepLabel">Setup</p>
+      <h1 id="panelTitle">Shot Tracker</h1>
+      <p id="panelText">Put your phone at the side of the court so it sees you and the hoop. Then start the camera.</p>
+      <p id="swatchRow" class="swatch-row" hidden><span id="swatch" class="swatch"></span><span id="swatchText"></span></p>
+      <div class="actions">
+        <button id="primaryBtn" class="btn primary" type="button">Start camera</button>
+        <button id="secondaryBtn" class="btn" type="button" hidden>Skip</button>
+      </div>
+      <p id="errorText" class="error" hidden></p>
+    </section>
+
+    <!-- Controls while tracking, along the bottom. -->
+    <nav id="controls" class="controls" hidden>
+      <button id="undoBtn" class="btn" type="button">Undo</button>
+      <button id="flipBtn" class="btn" type="button">Flip last</button>
+      <button id="addMakeBtn" class="btn" type="button">+ Make</button>
+      <button id="addMissBtn" class="btn" type="button">+ Miss</button>
+      <button id="endBtn" class="btn danger" type="button">End</button>
+    </nav>
+
+    <!-- Session summary and history, shown after you press End. -->
+    <section id="summary" class="panel" hidden>
+      <p class="step">Session saved</p>
+      <h1 id="summaryTitle">0/0</h1>
+      <table class="history">
+        <thead><tr><th>Date</th><th>Made</th><th>Shots</th><th>FG%</th></tr></thead>
+        <tbody id="historyBody"></tbody>
+      </table>
+      <div class="actions">
+        <button id="againBtn" class="btn primary" type="button">New session</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Load the JavaScript files. Order matters: app.js uses the classes from the others. -->
+  <script src="js/session.js"></script>
+  <script src="js/ballDetector.js"></script>
+  <script src="js/shotDetector.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
